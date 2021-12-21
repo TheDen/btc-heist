@@ -14,7 +14,6 @@ def seek(core):
     filename = "public_addresses_sorted.txt"
     found_keys = "found_keys.txt"
     log_rate_iterations = 10000
-    global num_threads
     start_time = dt.datetime.today().timestamp()
     mnemo = Mnemonic("english")
 
