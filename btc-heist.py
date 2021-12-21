@@ -40,7 +40,6 @@ def seek(core):
             print(found_key)
             with open(found_keys, "a") as f:
                 f.write(found_key)
-                f.close()
             break
 
 
