@@ -21,7 +21,7 @@ def seek(core):
     # Open file in memory as a set so searching is O(1)
     with open(filename) as f:
         publist = set(f.read().splitlines())
-    print("Core " + str(core) + ":  Searching Private Key..")
+    print("Core " + str(core) + ": Searching for Private Key...")
     iteration = 0
     while True:
         iteration += 1
