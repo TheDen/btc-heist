@@ -1,50 +1,53 @@
-#!/usr/bin/python3
-
-import os
-import time
-import datetime as dt
+from datetime import datetime
+from itertools import count
 import multiprocessing
-from bitcoin import *
+from bitcoin import sha256, privtopub, pubtoaddr
 from mnemonic import Mnemonic
 
 cores = 4
+filename = "public_addresses_sorted.txt"
+found_keys = "found_keys.txt"
 
 
-def seek(core):
-    filename = "public_addresses_sorted.txt"
-    found_keys = "found_keys.txt"
+def seek(core, btc_address_queue):
+    print(f'Core {core}: Searching for Private Key...')
+    mnemo = Mnemonic('english')
     log_rate_iterations = 10000
-    start_time = dt.datetime.today().timestamp()
-    mnemo = Mnemonic("english")
+    start_time = datetime.today().timestamp()
+    
+    for iteration in count(1):
 
-    print(f"Core {core}: loading file...")
-    # Open file in memory as a set so searching is O(1)
-    with open(filename) as f:
-        publist = set(f.read().splitlines())
-    print("Core " + str(core) + ": Searching for Private Key...")
-    iteration = 0
-    while True:
-        iteration += 1
         # Generate private + public keys and btc address
         private_key = sha256(mnemo.generate(strength=256))
         public_key = privtopub(private_key)
         btc_address = pubtoaddr(public_key)
-        # Log rate
+        btc_address_queue.put((private_key, public_key, btc_address))
+
+        # log rate
         if (iteration % log_rate_iterations) == 0:
-            time_diff = dt.datetime.today().timestamp() - start_time
-            print("Core :" + str(core) + " K/s = " + str(iteration / time_diff))
-        # Write private + public key + address if it exists in the file
-        if btc_address in publist:
-            found_key = f"\nPublic: {str(public_key)} | Private: {str(private_key)} | Address: {str(btc_address)}\n"
-            print(found_key)
-            with open(found_keys, "a") as f:
-                f.write(found_key)
-            break
+            time_diff = datetime.today().timestamp() - start_time
+            print(f'Core {core}: {iteration / time_diff} Key/s')  # 253 Key/s
 
 
 if __name__ == "__main__":
-    jobs = []
+
+    # generate list of pubkey with BTC
+    print(f'Loading "{filename}"...')
+    with open(filename) as f:
+        publist = frozenset(f)  # set() used for O(1) search
+    print('Loaded.')
+
+    btc_address_queue = multiprocessing.Queue()
+    
     for core in range(cores):
-        process = multiprocessing.Process(target=seek, args=(core,))
-        jobs.append(process)
+        process = multiprocessing.Process(target=seek, args=(core, btc_address_queue))
         process.start()
+    
+    while True:
+        private_key, public_key, btc_address = btc_address_queue.get()
+
+        if btc_address in publist:
+            found_key = f"\nPublic: {public_key} | Private: {private_key} | Address: {btc_address}\n"
+            print(found_key)
+            with open(found_keys, "a") as f:
+                f.write(found_key)
