@@ -10,11 +10,11 @@ found_keys = "found_keys.txt"
 
 
 def seek(core, btc_address_queue):
-    print(f'Core {core}: Searching for Private Key...')
-    mnemo = Mnemonic('english')
+    print(f"Core {core}: Searching for Private Key...")
+    mnemo = Mnemonic("english")
     log_rate_iterations = 10000
     start_time = datetime.today().timestamp()
-    
+
     for iteration in count(1):
 
         # Generate private + public keys and btc address
@@ -26,23 +26,22 @@ def seek(core, btc_address_queue):
         # log rate
         if (iteration % log_rate_iterations) == 0:
             time_diff = datetime.today().timestamp() - start_time
-            print(f'Core {core}: {iteration / time_diff} Key/s')  # 253 Key/s
+            print(f"Core {core}: {iteration / time_diff} Key/s")  # 253 Key/s
 
 
 if __name__ == "__main__":
-
     # generate list of pubkey with BTC
     print(f'Loading "{filename}"...')
     with open(filename) as f:
         publist = frozenset(f)  # set() used for O(1) search
-    print('Loaded.')
+    print("Loaded.")
 
     btc_address_queue = multiprocessing.Queue()
-    
+
     for core in range(cores):
         process = multiprocessing.Process(target=seek, args=(core, btc_address_queue))
         process.start()
-    
+
     while True:
         private_key, public_key, btc_address = btc_address_queue.get()
 
