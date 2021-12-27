@@ -1,2 +1,3 @@
 bitcoin==1.1.42
 mnemonic==0.20
+progressbar33==2.4

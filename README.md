@@ -16,7 +16,7 @@ then run `python3 btc-heist.py`
 
 
 ```
-usage: btc-heist.py [-h] [-c CORES] [-f ADDRESSES] [-o KEYFILE]
+usage: btc-heist.py [-h] [-c CORES] [-f ADDRESSES] [-o KEYFILE] [-d]
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -26,4 +26,5 @@ optional arguments:
                         File containing BTC addresses (default: public_addresses_sorted.txt),
   -o KEYFILE, --keyfile KEYFILE
                         File to output found keys (default: found_keys.txt)
+  -d, --download        Download and parse CSV file of bitcoin addresses
 ```
