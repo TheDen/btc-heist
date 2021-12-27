@@ -1,12 +1,9 @@
+import argparse
 from datetime import datetime
 from itertools import count
 import multiprocessing
 from bitcoin import sha256, privtopub, pubtoaddr
 from mnemonic import Mnemonic
-
-cores = 4
-filename = "public_addresses_sorted.txt"
-found_keys = "found_keys.txt"
 
 
 def seek(core, btc_address_queue):
@@ -30,9 +27,39 @@ def seek(core, btc_address_queue):
 
 
 if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-c",
+        "--cores",
+        default=4,
+        type=int,
+        help="Number of CPU cores to use (default: 4)",
+    )
+    parser.add_argument(
+        "-f",
+        "--addresses",
+        default="public_addresses_sorted.txt",
+        type=str,
+        help="File containing BTC addresses (default: public_addresses_sorted.txt),",
+    )
+    parser.add_argument(
+        "-o",
+        "--keyfile",
+        default="found_keys.txt",
+        type=str,
+        help="File to output found keys (default: found_keys.txt)",
+    )
+
+    args = parser.parse_args()
+
+    cores = args.cores
+    addresses_filename = args.addresses
+    keyfile = args.keyfile
+
     # generate list of pubkey with BTC
-    print(f'Loading "{filename}"...')
-    with open(filename) as f:
+    print(f'Loading "{addresses_filename}"...')
+    with open(addresses_filename) as f:
         publist = frozenset(f)  # set() used for O(1) search
     print("Loaded.")
 
@@ -48,5 +75,5 @@ if __name__ == "__main__":
         if btc_address in publist:
             found_key = f"\nPublic: {public_key} | Private: {private_key} | Address: {btc_address}\n"
             print(found_key)
-            with open(found_keys, "a") as f:
+            with open(keyfile, "a") as f:
                 f.write(found_key)
