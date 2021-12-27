@@ -50,9 +50,7 @@ if __name__ == "__main__":
         type=str,
         help="File to output found keys (default: found_keys.txt)",
     )
-
     args = parser.parse_args()
-
     cores = args.cores
     addresses_filename = args.addresses
     keyfile = args.keyfile
