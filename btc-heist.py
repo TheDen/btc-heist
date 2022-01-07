@@ -125,7 +125,7 @@ if __name__ == "__main__":
     while True:
         private_key, public_key, btc_address = btc_address_queue.get()
 
-        if btc_address in publist:
+        if f"{btc_address}\n" in publist:
             found_key = f"\nPublic: {public_key} | Private: {private_key} | Address: {btc_address}\n"
             print(found_key)
             with open(keyfile, "a") as f:
