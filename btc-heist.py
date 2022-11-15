@@ -14,7 +14,7 @@ from mnemonic import Mnemonic
 def seek(core, btc_address_queue):
     print(f"Core {core}: Searching for Private Key...")
     mnemo = Mnemonic("english")
-    log_rate_iterations = 1000
+    log_rate_iterations = 10000
     start_time = datetime.today().timestamp()
 
     for iteration in count(1):
