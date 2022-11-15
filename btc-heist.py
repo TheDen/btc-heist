@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import progressbar
-import csv
-import urllib.request
 from datetime import datetime
 from itertools import count
 import multiprocessing
