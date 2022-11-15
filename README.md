@@ -5,7 +5,7 @@
 
 Install deps, i.e., `python3 -m pip install -r requirements.txt`
 
-Download the [lastest list of all funded BTC addresses](http://addresses.loyce.club/)
+Download the [latest list of all funded BTC addresses](http://addresses.loyce.club/)
 
 ```bash
 wget 'http://addresses.loyce.club/Bitcoin_addresses_LATEST.txt.gz'
