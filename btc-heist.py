@@ -45,7 +45,7 @@ if __name__ == "__main__":
         "--addresses",
         default="Bitcoin_addresses_LATEST.txt",
         type=str,
-        help="File containing BTC addresses (default: public_addresses_sorted.txt),",
+        help="File containing BTC addresses (default: Bitcoin_addresses_LATEST.txt),",
     )
     parser.add_argument(
         "-o",
