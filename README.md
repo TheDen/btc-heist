@@ -1,6 +1,14 @@
+<div align="center">
+
 # btc-heist
 
+![Go Version](https://img.shields.io/github/go-mod/go-version/TheDen/btc-heist?style=flat-square&logo=go)
+[![License](https://img.shields.io/github/license/TheDen/btc-heist?style=flat-square)](/LICENSE)
+
+</div>
+<div align="center">
 Brute-forces Bitcoin wallets by generating both random BIP39 mnemonics (BIP44 HD wallets) and raw private keys (including pre-HD uncompressed keys), checking all derived addresses against a known set of funded addresses.
+</div>
 
 ## Setup
 
@@ -9,7 +17,7 @@ Brute-forces Bitcoin wallets by generating both random BIP39 mnemonics (BIP44 HD
 - Go 1.21+
 - `curl` and `gunzip` (standard on macOS/Linux)
 
-### 1. Download the address list
+### Download the address list
 
 The address list is sourced from [loyce.club](http://addresses.loyce.club/) — a regularly updated dataset of all known funded Bitcoin addresses (~50 million entries).
 
@@ -19,7 +27,12 @@ make fetch
 
 This downloads `Bitcoin_addresses_LATEST.txt.gz` from `http://addresses.loyce.club/Bitcoin_addresses_LATEST.txt.gz`, decompresses it, and saves it as `Bitcoin_addresses_LATEST.txt` in the project root. The file is large (~1 GB uncompressed); loading it into the Bloom filter and map at startup takes a few seconds.
 
-### 2. Build
+### Download a prebuilt binary
+
+Grab the latest release for your platform from
+[GitHub Releases](https://github.com/TheDen/btc-heist/releases/latest).
+
+### Or Build
 
 ```bash
 make build
