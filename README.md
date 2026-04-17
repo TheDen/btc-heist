@@ -4,22 +4,39 @@ Brute-forces Bitcoin wallets by generating both random BIP39 mnemonics (BIP44 HD
 
 ## Setup
 
-Download the latest list of all funded BTC addresses:
+### Prerequisites
+
+- Go 1.21+
+- `curl` and `gunzip` (standard on macOS/Linux)
+
+### 1. Download the address list
+
+The address list is sourced from [loyce.club](http://addresses.loyce.club/) — a regularly updated dataset of all known funded Bitcoin addresses (~50 million entries).
 
 ```bash
 make fetch
 ```
 
-Build the binary:
+This downloads `Bitcoin_addresses_LATEST.txt.gz` from `http://addresses.loyce.club/Bitcoin_addresses_LATEST.txt.gz`, decompresses it, and saves it as `Bitcoin_addresses_LATEST.txt` in the project root. The file is large (~1 GB uncompressed); loading it into the Bloom filter and map at startup takes a few seconds.
+
+### 2. Build
 
 ```bash
 make build
 ```
 
+The binary is written to `bin/btc-heist`.
+
 ## Running
 
 ```bash
 ./bin/btc-heist
+```
+
+By default it uses all available CPU cores and checks 50 derived addresses per mnemonic. Progress is printed every 5 seconds:
+
+```
+[5s] 42301 keys/s  total: 211505  matched: 0
 ```
 
 ## Options
