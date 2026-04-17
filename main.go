@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	mrand "math/rand/v2"
 	"os"
 	"os/signal"
 	"runtime"
@@ -23,6 +24,10 @@ import (
 	"golang.org/x/exp/mmap"
 )
 
+// addrHash stores the raw 20-byte Hash160 of a public key, used as a compact
+// map/bloom key that eliminates base58 encoding from the hot path.
+type addrHash [20]byte
+
 const (
 	// bloomEstimate is sized above the ~50M addresses in the loyce.club dataset.
 	bloomEstimate = 100_000_000
@@ -34,7 +39,6 @@ const (
 	// defaultAddressesPerSeed amortises the expensive PBKDF2 seed derivation
 	// across multiple child addresses. Each extra derive is cheap (HMAC-SHA512
 	// + point addition) compared to the 2048-round PBKDF2 in NewSeed.
-	// At 50 addresses/seed vs 20, throughput improves ~56% for typical hardware.
 	defaultAddressesPerSeed = 50
 
 	// counterFlushInterval is how many address checks a worker accumulates
@@ -47,9 +51,21 @@ var (
 	keysMatched uint64
 )
 
-// loadAddresses memory-maps filename and populates a map and Bloom filter.
-// Both are written once here and then read concurrently without locks.
-func loadAddresses(filename string) (map[string]struct{}, *bloom.BloomFilter, error) {
+// newFastRNG returns a ChaCha8 CSPRNG seeded from crypto/rand.
+// Much faster than crypto/rand for bulk random byte generation since it
+// avoids per-call syscall overhead.
+func newFastRNG() *mrand.ChaCha8 {
+	var seed [32]byte
+	if _, err := rand.Read(seed[:]); err != nil {
+		panic(err)
+	}
+	return mrand.NewChaCha8(seed)
+}
+
+// loadAddresses memory-maps filename and populates a map and Bloom filter
+// keyed on the raw 20-byte Hash160 extracted from each address. Using binary
+// keys avoids base58 encoding in the hot path and reduces bloom hash input size.
+func loadAddresses(filename string) (map[addrHash]struct{}, *bloom.BloomFilter, error) {
 	r, err := mmap.Open(filename)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open %s: %w", filename, err)
@@ -61,34 +77,52 @@ func loadAddresses(filename string) (map[string]struct{}, *bloom.BloomFilter, er
 	// 4 MB read buffer — reduces the number of Read calls over the large file.
 	scanner.Buffer(make([]byte, 4*1024*1024), bufio.MaxScanTokenSize)
 
+	net := &chaincfg.MainNetParams
 	filter := bloom.NewWithEstimates(bloomEstimate, bloomFPRate)
 	// Pre-allocate near the expected dataset size to avoid repeated rehashing.
-	publist := make(map[string]struct{}, bloomEstimate)
+	publist := make(map[addrHash]struct{}, bloomEstimate)
 
+	var skipped int
 	for scanner.Scan() {
-		addr := scanner.Text()
-		if addr == "" {
+		line := scanner.Text()
+		if line == "" {
 			continue
 		}
-		publist[addr] = struct{}{}
-		filter.AddString(addr)
+		decoded, err := btcutil.DecodeAddress(line, net)
+		if err != nil {
+			skipped++
+			continue
+		}
+		sa := decoded.ScriptAddress()
+		if len(sa) != 20 {
+			skipped++
+			continue
+		}
+		var h addrHash
+		copy(h[:], sa)
+		publist[h] = struct{}{}
+		filter.Add(h[:])
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, nil, fmt.Errorf("scan %s: %w", filename, err)
 	}
+	if skipped > 0 {
+		fmt.Printf("Skipped %d addresses that could not be decoded.\n", skipped)
+	}
 	return publist, filter, nil
 }
 
-// deriveInto fills out (reset to len 0, capacity unchanged) with
-// cap(out) compressed-pubkey P2PKH addresses on the BIP44 external chain
-// (m/44'/0'/0'/0/i) for the given mnemonic and passphrase.
+// deriveHashesInto fills out (reset to len 0, capacity unchanged) with
+// cap(out) Hash160 values on the BIP44 external chain (m/44'/0'/0'/0/i)
+// for the given mnemonic and passphrase. Returns raw hashes instead of
+// base58-encoded strings to avoid encoding overhead in the hot path.
 // Reusing the backing array across calls avoids a heap allocation per seed.
 //
 // Cost breakdown per call:
 //  1. bip39.NewSeed  — PBKDF2 (2048 × HMAC-SHA512): the dominant cost, ~1–5 ms
 //  2. NewMaster + 4 hardened Derives for m/44'/0'/0'/0
-//  3. n non-hardened child Derives + P2PKH address encoding (~0.1 ms each)
-func deriveInto(mnemonic, passphrase string, out []string, net *chaincfg.Params) ([]string, error) {
+//  3. n non-hardened child Derives + Hash160 (~0.05 ms each)
+func deriveHashesInto(mnemonic, passphrase string, out []addrHash, net *chaincfg.Params) ([]addrHash, error) {
 	seed := bip39.NewSeed(mnemonic, passphrase)
 
 	masterKey, err := hdkeychain.NewMaster(seed, net)
@@ -119,38 +153,55 @@ func deriveInto(mnemonic, passphrase string, out []string, net *chaincfg.Params)
 		if err != nil {
 			return out, err
 		}
-		addr, err := child.Address(net)
+		pub, err := child.ECPubKey()
 		if err != nil {
 			return out, err
 		}
-		out = append(out, addr.EncodeAddress())
+		h := btcutil.Hash160(pub.SerializeCompressed())
+		var hash addrHash
+		copy(hash[:], h)
+		out = append(out, hash)
 	}
 	return out, nil
 }
 
-// deriveAddresses is a convenience wrapper around deriveInto that allocates a
-// fresh slice. Used by tests and one-off callers that don't need slice reuse.
+// deriveAddresses is a convenience wrapper around deriveHashesInto that returns
+// base58-encoded P2PKH address strings. Used by tests and one-off callers.
 func deriveAddresses(mnemonic, passphrase string, n uint32, net *chaincfg.Params) ([]string, error) {
-	return deriveInto(mnemonic, passphrase, make([]string, 0, n), net)
+	hashes, err := deriveHashesInto(mnemonic, passphrase, make([]addrHash, 0, n), net)
+	if err != nil {
+		return nil, err
+	}
+	addrs := make([]string, len(hashes))
+	for i, h := range hashes {
+		addr, err := btcutil.NewAddressPubKeyHash(h[:], net)
+		if err != nil {
+			return nil, err
+		}
+		addrs[i] = addr.EncodeAddress()
+	}
+	return addrs, nil
 }
 
 // worker continuously generates BIP39 mnemonics, derives BIP44 addresses, and
 // checks them against the Bloom filter and address map. Each goroutine is
 // independent — no locks in the hot path.
 //
-// Address checks are counted locally and flushed to the shared atomics every
-// counterFlushInterval iterations to reduce cache-line contention across cores.
+// Uses a ChaCha8 CSPRNG for fast entropy generation (avoids crypto/rand syscalls)
+// and raw Hash160 lookups (avoids base58 encoding per address).
 func worker(
-	publist map[string]struct{},
+	publist map[addrHash]struct{},
 	filter *bloom.BloomFilter,
 	matches chan<- string,
 	numAddresses uint32,
 	quit <-chan struct{},
 ) {
 	net := &chaincfg.MainNetParams
+	rng := newFastRNG()
+	entropy := make([]byte, 16) // 128-bit entropy for 12-word BIP39 mnemonic
 
-	// Pre-allocate once; deriveInto reuses the backing array every iteration.
-	addrs := make([]string, 0, numAddresses)
+	// Pre-allocate once; deriveHashesInto reuses the backing array every iteration.
+	addrs := make([]addrHash, 0, numAddresses)
 
 	var localChecked, localMatched uint64
 	defer func() {
@@ -165,27 +216,26 @@ func worker(
 		default:
 		}
 
-		entropy, err := bip39.NewEntropy(128)
-		if err != nil {
-			continue
-		}
+		rng.Read(entropy)
 		mnemonic, err := bip39.NewMnemonic(entropy)
 		if err != nil {
 			continue
 		}
 
-		addrs, err = deriveInto(mnemonic, "", addrs, net)
+		addrs, err = deriveHashesInto(mnemonic, "", addrs, net)
 		if err != nil {
 			continue
 		}
 
-		for _, addrStr := range addrs {
+		for _, h := range addrs {
 			localChecked++
 			// Two-stage lookup: cheap Bloom filter first, then exact map check.
-			if filter.TestString(addrStr) {
-				if _, ok := publist[addrStr]; ok {
+			if filter.Test(h[:]) {
+				if _, ok := publist[h]; ok {
 					localMatched++
-					matches <- fmt.Sprintf("mnemonic=%s address=%s\n", mnemonic, addrStr)
+					// Only encode the address to base58 on match (astronomically rare).
+					addr, _ := btcutil.NewAddressPubKeyHash(h[:], net)
+					matches <- fmt.Sprintf("mnemonic=%s address=%s\n", mnemonic, addr.EncodeAddress())
 				}
 			}
 		}
@@ -204,13 +254,17 @@ func worker(
 // uncompressed keys, which produce a different address from the same private key.
 // Matches are reported in WIF format so the key can be imported directly into a
 // wallet.
+//
+// Uses a ChaCha8 CSPRNG for fast key generation and raw Hash160 lookups.
+// WIF and base58 encoding are deferred to match time only.
 func rawKeyWorker(
-	publist map[string]struct{},
+	publist map[addrHash]struct{},
 	filter *bloom.BloomFilter,
 	matches chan<- string,
 	quit <-chan struct{},
 ) {
 	net := &chaincfg.MainNetParams
+	rng := newFastRNG()
 
 	var localChecked, localMatched uint64
 	defer func() {
@@ -220,16 +274,6 @@ func rawKeyWorker(
 
 	privBytes := make([]byte, 32)
 
-	check := func(addrStr, wif string) {
-		localChecked++
-		if filter.TestString(addrStr) {
-			if _, ok := publist[addrStr]; ok {
-				localMatched++
-				matches <- fmt.Sprintf("wif=%s address=%s\n", wif, addrStr)
-			}
-		}
-	}
-
 	for {
 		select {
 		case <-quit:
@@ -237,32 +281,34 @@ func rawKeyWorker(
 		default:
 		}
 
-		if _, err := rand.Read(privBytes); err != nil {
-			continue
-		}
-
+		rng.Read(privBytes)
 		privKey, pubKey := btcec.PrivKeyFromBytes(privBytes)
 
-		wifComp, err := btcutil.NewWIF(privKey, net, true)
-		if err != nil {
-			continue
-		}
-		wifUncomp, err := btcutil.NewWIF(privKey, net, false)
-		if err != nil {
-			continue
-		}
-
 		// Compressed address (most common post-2013).
-		if h := btcutil.Hash160(pubKey.SerializeCompressed()); true {
-			if addr, err := btcutil.NewAddressPubKeyHash(h, net); err == nil {
-				check(addr.EncodeAddress(), wifComp.String())
+		hComp := btcutil.Hash160(pubKey.SerializeCompressed())
+		var hashComp addrHash
+		copy(hashComp[:], hComp)
+		localChecked++
+		if filter.Test(hashComp[:]) {
+			if _, ok := publist[hashComp]; ok {
+				localMatched++
+				wif, _ := btcutil.NewWIF(privKey, net, true)
+				addr, _ := btcutil.NewAddressPubKeyHash(hashComp[:], net)
+				matches <- fmt.Sprintf("wif=%s address=%s\n", wif.String(), addr.EncodeAddress())
 			}
 		}
 
 		// Uncompressed address (pre-HD / early wallets).
-		if h := btcutil.Hash160(pubKey.SerializeUncompressed()); true {
-			if addr, err := btcutil.NewAddressPubKeyHash(h, net); err == nil {
-				check(addr.EncodeAddress(), wifUncomp.String())
+		hUncomp := btcutil.Hash160(pubKey.SerializeUncompressed())
+		var hashUncomp addrHash
+		copy(hashUncomp[:], hUncomp)
+		localChecked++
+		if filter.Test(hashUncomp[:]) {
+			if _, ok := publist[hashUncomp]; ok {
+				localMatched++
+				wif, _ := btcutil.NewWIF(privKey, net, false)
+				addr, _ := btcutil.NewAddressPubKeyHash(hashUncomp[:], net)
+				matches <- fmt.Sprintf("wif=%s address=%s\n", wif.String(), addr.EncodeAddress())
 			}
 		}
 

@@ -36,12 +36,24 @@ const (
 	rawTestAddrUncompressed = "1EHNa6Q4Jz2uvNExL497mE43ikXhwF6kZm"
 )
 
+// mustDecodeAddrHash decodes a base58 address string to its raw 20-byte Hash160.
+func mustDecodeAddrHash(t *testing.T, addr string) addrHash {
+	t.Helper()
+	decoded, err := btcutil.DecodeAddress(addr, &chaincfg.MainNetParams)
+	if err != nil {
+		t.Fatalf("decode %q: %v", addr, err)
+	}
+	var h addrHash
+	copy(h[:], decoded.ScriptAddress())
+	return h
+}
+
 // ── loadAddresses ────────────────────────────────────────────────────────────
 
 func TestLoadAddresses_Basic(t *testing.T) {
 	want := []string{
 		"1LqBGSKuX5yYUonjxT5qGfpUsXKYYWeabA",
-		"1JAd7XCBMAhP1V88q9YpFCDruGqKFMxFJZ",
+		"1Ak8PffB2meyfYnbXZR9EGfLfFZVpzJvQP",
 		"3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy",
 	}
 	f := writeTempAddrs(t, want)
@@ -54,10 +66,11 @@ func TestLoadAddresses_Basic(t *testing.T) {
 		t.Errorf("publist len = %d, want %d", len(publist), len(want))
 	}
 	for _, addr := range want {
-		if _, ok := publist[addr]; !ok {
+		h := mustDecodeAddrHash(t, addr)
+		if _, ok := publist[h]; !ok {
 			t.Errorf("publist missing %q", addr)
 		}
-		if !filter.TestString(addr) {
+		if !filter.Test(h[:]) {
 			t.Errorf("bloom filter missing %q", addr)
 		}
 	}
@@ -107,7 +120,7 @@ func TestLoadAddresses_DeduplicatesAddresses(t *testing.T) {
 	}
 }
 
-// ── deriveAddresses / deriveInto ─────────────────────────────────────────────
+// ── deriveAddresses / deriveHashesInto ──────────────────────────────────────
 
 func TestDeriveAddresses_KnownVector(t *testing.T) {
 	addrs, err := deriveAddresses(abandonMnemonic, "", 3, &chaincfg.MainNetParams)
@@ -181,48 +194,54 @@ func TestDeriveAddresses_MainnetAddressFormat(t *testing.T) {
 	}
 }
 
-func TestDeriveInto_MatchesDeriveAddresses(t *testing.T) {
+func TestDeriveHashesInto_MatchesDeriveAddresses(t *testing.T) {
 	const n = 5
-	got, err := deriveInto(abandonMnemonic, "", make([]string, 0, n), &chaincfg.MainNetParams)
+	net := &chaincfg.MainNetParams
+	hashes, err := deriveHashesInto(abandonMnemonic, "", make([]addrHash, 0, n), net)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want, err := deriveAddresses(abandonMnemonic, "", n, &chaincfg.MainNetParams)
+	addrs, err := deriveAddresses(abandonMnemonic, "", n, net)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != len(want) {
-		t.Fatalf("length mismatch: got %d, want %d", len(got), len(want))
+	if len(hashes) != len(addrs) {
+		t.Fatalf("length mismatch: got %d, want %d", len(hashes), len(addrs))
 	}
-	for i := range got {
-		if got[i] != want[i] {
-			t.Errorf("index %d: got %q, want %q", i, got[i], want[i])
+	for i, h := range hashes {
+		addr, err := btcutil.NewAddressPubKeyHash(h[:], net)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := addr.EncodeAddress(); got != addrs[i] {
+			t.Errorf("index %d: hash-derived %q != %q", i, got, addrs[i])
 		}
 	}
 }
 
-func TestDeriveInto_SliceReset(t *testing.T) {
+func TestDeriveHashesInto_SliceReset(t *testing.T) {
 	const n = 3
-	out := make([]string, 0, n)
+	net := &chaincfg.MainNetParams
+	out := make([]addrHash, 0, n)
 
-	first, err := deriveInto(abandonMnemonic, "", out, &chaincfg.MainNetParams)
+	first, err := deriveHashesInto(abandonMnemonic, "", out, net)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Pass the full slice back reset to len 0 — deriveInto should overwrite it.
-	second, err := deriveInto(abandonMnemonic, "", first[:0], &chaincfg.MainNetParams)
+	// Pass the full slice back reset to len 0 — deriveHashesInto should overwrite it.
+	second, err := deriveHashesInto(abandonMnemonic, "", first[:0], net)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(second) != n {
-		t.Fatalf("expected %d addresses after reset, got %d", n, len(second))
+		t.Fatalf("expected %d hashes after reset, got %d", n, len(second))
 	}
 	if cap(second) != n {
 		t.Errorf("capacity changed after reuse: got %d, want %d", cap(second), n)
 	}
 	for i := range first {
 		if first[i] != second[i] {
-			t.Errorf("index %d: %q != %q after reuse", i, first[i], second[i])
+			t.Errorf("index %d: mismatch after reuse", i)
 		}
 	}
 }
@@ -330,7 +349,7 @@ func TestRawKeyAddresses_WIFEncoding(t *testing.T) {
 // ── rawKeyWorker ──────────────────────────────────────────────────────────────
 
 func TestRawKeyWorker_RespectsQuit(t *testing.T) {
-	publist := map[string]struct{}{}
+	publist := map[addrHash]struct{}{}
 	filter := bloom.NewWithEstimates(100, 0.001)
 	matches := make(chan string, 16)
 
@@ -356,7 +375,7 @@ func TestRawKeyWorker_RespectsQuit(t *testing.T) {
 }
 
 func TestRawKeyWorker_IncrementsCounter(t *testing.T) {
-	publist := map[string]struct{}{}
+	publist := map[addrHash]struct{}{}
 	filter := bloom.NewWithEstimates(100, 0.001)
 	matches := make(chan string, 16)
 
@@ -389,13 +408,14 @@ func TestRawKeyWorker_DetectsCompressedMatch(t *testing.T) {
 	net := &chaincfg.MainNetParams
 	privKey, _ := btcec.PrivKeyFromBytes(rawTestPrivKey[:])
 
+	h := mustDecodeAddrHash(t, rawTestAddrCompressed)
 	filter := bloom.NewWithEstimates(100, 0.001)
-	publist := map[string]struct{}{rawTestAddrCompressed: {}}
-	filter.AddString(rawTestAddrCompressed)
+	publist := map[addrHash]struct{}{h: {}}
+	filter.Add(h[:])
 
 	matches := make(chan string, 1)
-	if filter.TestString(rawTestAddrCompressed) {
-		if _, ok := publist[rawTestAddrCompressed]; ok {
+	if filter.Test(h[:]) {
+		if _, ok := publist[h]; ok {
 			wif, _ := btcutil.NewWIF(privKey, net, true)
 			matches <- fmt.Sprintf("wif=%s address=%s\n", wif.String(), rawTestAddrCompressed)
 		}
@@ -428,13 +448,15 @@ func TestRawKeyWorker_DetectsUncompressedMatch(t *testing.T) {
 	}
 	addrStr := addr.EncodeAddress()
 
+	var hash addrHash
+	copy(hash[:], h)
 	filter := bloom.NewWithEstimates(100, 0.001)
-	publist := map[string]struct{}{addrStr: {}}
-	filter.AddString(addrStr)
+	publist := map[addrHash]struct{}{hash: {}}
+	filter.Add(hash[:])
 
 	matches := make(chan string, 1)
-	if filter.TestString(addrStr) {
-		if _, ok := publist[addrStr]; ok {
+	if filter.Test(hash[:]) {
+		if _, ok := publist[hash]; ok {
 			wif, _ := btcutil.NewWIF(privKey, net, false)
 			matches <- fmt.Sprintf("wif=%s address=%s\n", wif.String(), addrStr)
 		}
@@ -534,7 +556,7 @@ func TestFileWriter_DrainOnOpenError(t *testing.T) {
 // ── worker ───────────────────────────────────────────────────────────────────
 
 func TestWorker_RespectsQuit(t *testing.T) {
-	publist := map[string]struct{}{}
+	publist := map[addrHash]struct{}{}
 	filter := bloom.NewWithEstimates(100, 0.001)
 	matches := make(chan string, 16)
 
@@ -561,7 +583,7 @@ func TestWorker_RespectsQuit(t *testing.T) {
 }
 
 func TestWorker_IncrementsCounter(t *testing.T) {
-	publist := map[string]struct{}{}
+	publist := map[addrHash]struct{}{}
 	filter := bloom.NewWithEstimates(100, 0.001)
 	matches := make(chan string, 16)
 
@@ -593,27 +615,32 @@ func TestWorker_IncrementsCounter(t *testing.T) {
 }
 
 func TestWorker_DetectsMatch(t *testing.T) {
-	// Derive the addresses we expect from the abandon mnemonic so we can
-	// pre-populate the publist. The worker generates random mnemonics, so
-	// instead we drive the matching logic directly using deriveAddresses +
-	// a hand-rolled check loop — this tests the same code path.
-	known, err := deriveAddresses(abandonMnemonic, "", 3, &chaincfg.MainNetParams)
+	net := &chaincfg.MainNetParams
+	known, err := deriveAddresses(abandonMnemonic, "", 3, net)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	filter := bloom.NewWithEstimates(100, 0.001)
-	publist := make(map[string]struct{}, len(known))
+	publist := make(map[addrHash]struct{}, len(known))
 	for _, a := range known {
-		publist[a] = struct{}{}
-		filter.AddString(a)
+		h := mustDecodeAddrHash(t, a)
+		publist[h] = struct{}{}
+		filter.Add(h[:])
+	}
+
+	// Derive hashes and check them against the publist (same code path as worker).
+	hashes, err := deriveHashesInto(abandonMnemonic, "", make([]addrHash, 0, 3), net)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	matches := make(chan string, 10)
-	for _, addrStr := range known {
-		if filter.TestString(addrStr) {
-			if _, ok := publist[addrStr]; ok {
-				matches <- fmt.Sprintf("mnemonic=%s address=%s\n", abandonMnemonic, addrStr)
+	for _, hash := range hashes {
+		if filter.Test(hash[:]) {
+			if _, ok := publist[hash]; ok {
+				addr, _ := btcutil.NewAddressPubKeyHash(hash[:], net)
+				matches <- fmt.Sprintf("mnemonic=%s address=%s\n", abandonMnemonic, addr.EncodeAddress())
 			}
 		}
 	}
@@ -641,12 +668,12 @@ func BenchmarkDeriveAddresses(b *testing.B) {
 	}
 }
 
-func BenchmarkDeriveInto_Reuse(b *testing.B) {
-	out := make([]string, 0, defaultAddressesPerSeed)
+func BenchmarkDeriveHashesInto_Reuse(b *testing.B) {
+	out := make([]addrHash, 0, defaultAddressesPerSeed)
 	net := &chaincfg.MainNetParams
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		out, _ = deriveInto(abandonMnemonic, "", out[:0], net)
+		out, _ = deriveHashesInto(abandonMnemonic, "", out[:0], net)
 	}
 }
 
@@ -660,6 +687,17 @@ func BenchmarkRawKeyDerivation(b *testing.B) {
 		_, pubKey := btcec.PrivKeyFromBytes(privBytes)
 		h := btcutil.Hash160(pubKey.SerializeCompressed())
 		btcutil.NewAddressPubKeyHash(h, net)
+	}
+}
+
+func BenchmarkRawKeyDerivation_HashOnly(b *testing.B) {
+	rng := newFastRNG()
+	privBytes := make([]byte, 32)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rng.Read(privBytes)
+		_, pubKey := btcec.PrivKeyFromBytes(privBytes)
+		btcutil.Hash160(pubKey.SerializeCompressed())
 	}
 }
 
