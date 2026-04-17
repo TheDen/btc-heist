@@ -1,28 +1,46 @@
 # btc-heist
 
+Brute-forces Bitcoin wallets by generating both random BIP39 mnemonics (BIP44 HD wallets) and raw private keys (including pre-HD uncompressed keys), checking all derived addresses against a known set of funded addresses.
+
+## Setup
+
+Download the latest list of all funded BTC addresses:
+
+```bash
+make fetch
+```
+
+Build the binary:
+
+```bash
+make build
+```
 
 ## Running
 
-Install deps, i.e., `python3 -m pip install -r requirements.txt`
-
-Download the [latest list of all funded BTC addresses](http://addresses.loyce.club/)
-
 ```bash
-wget 'http://addresses.loyce.club/Bitcoin_addresses_LATEST.txt.gz'
-gzip -d Bitcoin_addresses_LATEST.txt.gz
+./bin/btc-heist
 ```
-then run `python3 btc-heist.py`
+
+## Options
 
 ```
-usage: btc-heist.py [-h] [-c CORES] [-f ADDRESSES] [-o KEYFILE]
+  -c int    number of CPU cores to use (default: all cores)
+  -f string file containing BTC addresses (default: Bitcoin_addresses_LATEST.txt)
+  -n uint   addresses to check per mnemonic (default: 50)
+  -o string output file for found keys (default: found_keys.txt)
+```
 
-options:
-  -h, --help            show this help message and exit
-  -c CORES, --cores CORES
-                        Number of CPU cores to use (default: 4)
-  -f ADDRESSES, --addresses ADDRESSES
-                        File containing BTC addresses (default:
-                        Bitcoin_addresses_LATEST.txt),
-  -o KEYFILE, --keyfile KEYFILE
-                        File to output found keys (default: found_keys.txt)
+## Output
+
+Matches are appended to `found_keys.txt`. BIP39 wallet matches are written as:
+
+```
+mnemonic=<words> address=<address>
+```
+
+Raw private key matches are written as:
+
+```
+wif=<WIF-encoded-key> address=<address>
 ```
