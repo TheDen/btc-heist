@@ -1,4 +1,4 @@
-BINARY_NAME := bin/btc-heist
+BINARY_NAME := btc-heist
 EXTRA_BUILD_FLAGS=-buildvcs=false
 LDFLAGS=-s -w
 PKG := main
